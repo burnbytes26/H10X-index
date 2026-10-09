@@ -1,0 +1,28 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["node_modules"]
+solc_version = "0.8.28"
+# Hedera supports the Cancun opcodes emitted by solc (TSTORE/TLOAD/MCOPY) since v0.50 (HIP-865)
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+# "ipfs" keeps the metadata hash in the bytecode, which gives an exact match on Sourcify/HashScan
+bytecode_hash = "ipfs"
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@hiero/=node_modules/@hiero-ledger/hiero-contracts/",
+  "forge-std/=node_modules/forge-std/src/",
+]
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs = 128
+depth = 40
+fail_on_revert = false
+
+[fmt]
+line_length = 110
