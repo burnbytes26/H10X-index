@@ -1,25 +1,27 @@
-# Security policy
+# Security
 
-## Scope
+## Report a vulnerability
 
-`src/H10XVault.sol`, deployed on Hedera mainnet as contract `0.0.10907483` (H10XVault 1.3.0), and the H10X token
-`0.0.10907484`.
+Send your report from the form at **https://h10xindex.xyz/security/#report** or by email to **h10xindex@gmail.com**.
+Please include what happens, why, and how to reproduce it (transaction IDs or a Foundry test). Don't disclose it
+publicly until we have answered and holders are protected.
 
-## Reporting a vulnerability
+## Bug bounty (closed)
 
-Please email **h10xindex@gmail.com** with:
+The bug bounty ran on Hedera testnet until **6 November 2026**, with $2,000 in HBAR for a critical vulnerability in the
+vault. **No critical issue was found**: no report could steal from the vault, mint H10X without the basket or alter what
+backs it. Every finding was minor, informational or not possible on Hedera, and the contract didn't need to change.
 
-- a description of the issue and its impact,
-- steps or a test that reproduces it (a Foundry test against this repository is ideal),
-- whether you believe funds are at risk now.
+The full results, with every finding, who reported it and what we did, are at
+**https://h10xindex.xyz/security/bounty/** and in [`security/bug-bounty-2026-11.md`](security/bug-bounty-2026-11.md).
 
-Please do not disclose the issue publicly until we have replied and, where possible, mitigated it. The vault is
-immutable, so mitigations are operational: the multisig can pause new issuance and adjust governance settings, while
-redemptions always stay open.
+## Review status
 
-We will acknowledge your report as soon as we can and keep you informed while we investigate.
+The vault has had a self-review by the H10X team (static analysis, two manual review rounds, Foundry unit, fuzz and
+invariant tests, and a testnet rehearsal) and a public bug bounty. It is not an independent audit.
 
-## Status
-
-The contract has had a self-review (static analysis, two manual review rounds, extensive testing and testnet
-rehearsals). It has not yet had an independent audit. See [`security/`](security).
+| | Mainnet |
+|---|---|
+| Vault (H10XVault 1.3.0) | 0.0.10907483 |
+| H10X token | 0.0.10907484 |
+| Multisig (owner, rebalancer, guardian) | 0.0.10907480 |

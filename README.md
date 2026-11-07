@@ -72,19 +72,23 @@ Checks enforced on-chain by the vault:
 - **H10X token.** Before adopting it, the vault verifies that it is the treasury and the only supply key, and that
   the token has no admin, KYC, freeze, wipe, fee-schedule or pause keys and no custom fees.
 - **Basket components.** A token can only join the basket if it has no KYC, freeze, fee-schedule or pause keys and
-  no custom fees, so its issuer cannot block the vault's transfers or add fees later.
+  no custom fees, so its issuer cannot block the vault's transfers or add fees later. On top of that, our basket rule
+  only proposes a token with a wipe key if that key is held by a reviewed contract that can't burn the vault's balance.
 
 ## Security
 
-- **124 Foundry tests**: unit, fuzz, invariant and economic simulations, with a mocked Hedera Token Service.
+- **128 Foundry tests**: unit, fuzz, invariant and economic simulations, with a mocked Hedera Token Service, plus the
+  findings of the bug bounty (`test/H10XVault.bounty.t.sol`).
 - **Static analysis**: Slither 0.11.6 and Aderyn 0.6.8. Every result was triaged by hand and no exploitable issue
   remains. Raw outputs are in [`security/`](security).
 - **Manual review**: two rounds. Version 1.3.0 fixes every finding except F-1 (trust in the multisig, by design) and
   F-5 (a harmless dust case with a workaround).
 - **Testnet**: the fixes were verified live on Hedera testnet, and 1.3.0 passed a full rehearsal before mainnet,
   including a basket token deleted by its issuer.
+- **Bug bounty**: $2,000 in HBAR for a critical vulnerability, on Hedera testnet until 6 November 2026. No critical
+  issue was found; every finding and what we did is in [`security/bug-bounty-2026-11.md`](security/bug-bounty-2026-11.md).
 
-This is a self-review, **not an independent audit**. An independent audit is planned. Full report:
+This is a self-review and a public bug bounty, **not an independent audit**. An independent audit is planned. Full report:
 [`security/H10X-Security-Review-Public.pdf`](security/H10X-Security-Review-Public.pdf) and
 [`security/static-analysis-2026-09-30.md`](security/static-analysis-2026-09-30.md).
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

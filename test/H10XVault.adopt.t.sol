@@ -216,7 +216,8 @@ contract H10XVaultAdoptTest is Test {
     }
 
     function test_adopt_revert_freezeDefault() public {
-        address token = _good();
+        // en Hedera un token con freezeDefault siempre tiene clave freeze: la adopción lo para antes por freezeDefault
+        address token = hts.hapiCreate(address(vault), address(vault), 4, 8, 0);
         hts.setTokenFlags(token, false, true, false, false);
         _expectNotAdoptable(token, "freeze default");
     }

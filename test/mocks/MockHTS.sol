@@ -37,6 +37,8 @@ contract MockHTSToken is ERC20 {
     function _update(address from, address to, uint256 value) internal override {
         // Hedera: a deleted token cannot be transferred, minted or burned (balanceOf keeps working)
         require(!MockHTS(HTS).isDeletedToken(address(this)), "TOKEN_WAS_DELETED");
+        // Hedera rechaza una transferencia de una cuenta a sí misma (la cuenta sale dos veces en la lista de importes)
+        if (from != address(0) && from == to) revert("ACCOUNT_REPEATED_IN_ACCOUNT_AMOUNTS");
         if (to != address(0)) {
             require(MockHTS(HTS).isAssociated(address(this), to), "TOKEN_NOT_ASSOCIATED_TO_ACCOUNT");
         }
@@ -153,8 +155,10 @@ contract MockHTS {
     }
 
     /// @notice Solo tests: variantes de token para probar la adopción.
+    ///         Como en Hedera, freezeDefault exige una clave freeze (TokenCreate sin ella: TOKEN_HAS_NO_FREEZE_KEY).
     function setTokenFlags(address token, bool finite, bool freezeDefault_, bool deleted_, bool supplyEd25519) external {
         TokenData storage d = tokenData[token];
+        if (freezeDefault_) require(d.keyMask & 4 != 0, "TOKEN_HAS_NO_FREEZE_KEY");
         d.finiteSupply = finite;
         d.freezeDefault = freezeDefault_;
         d.deleted = deleted_;
