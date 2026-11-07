@@ -1,39 +1,46 @@
-"""Backtest del índice H10X frente a BTC, HBAR y HBAR+SAUCE (50/50).
+"""Backtest of the H10X index against Bitcoin, HBAR and SAUCE.
 
-Entrada: backtest-prices.json (scripts/tools/backtest-data.js). Salida: results.json con series diarias, rendimientos
-mensuales y anuales, métricas y metodología.
+Input: prices-weekly.csv (USD closes) or a daily JSON price file. Output: results.json with the portfolio series,
+monthly and yearly returns, metrics and a cost/frequency sensitivity analysis.
 
-Reglas (las mismas para todas las carteras con varios activos):
-  - Capital inicial 1.000 $ el día 1 del mes de inicio: 35 meses completos + el mes en curso (3 años).
-  - Índice: pesos objetivo de config/index.json. Rebalanceo mensual (día 1) a los pesos objetivo, repartiendo el peso
-    de los tokens que aún no existían entre los que sí (proporcionalmente). Un token entra en el primer rebalanceo
-    después de tener precio.
-  - HBAR+SAUCE: 50/50 con el mismo rebalanceo mensual.
-  - Coste de rebalanceo: COST_BPS sobre lo negociado (comisión del pool + deslizamiento).
-  - BTC y HBAR: comprar y mantener.
-  - No se incluyen las comisiones de entrada/salida de la bóveda (0,5 % + 0,5 %) ni las de exchanges.
+Rules (the same for every multi-asset portfolio):
+  - Starting capital (START_CAPITAL, default 1,000 USD) invested on the first day of the start month: 35 full months
+    plus the current one (3 years).
+  - Index: the current target weights of the basket (WEIGHTS below; WBTC and WETH are valued at the BTC and ETH market
+    price). Rebalanced to target on the first day of each month; tokens without a price yet have their weight shared
+    pro rata among the others, and a token enters at the first rebalance after it has a price.
+    WEIGHTS_JSON='{"HBAR": 20, ...}' replaces WEIGHTS, to try another basket.
+  - Rebalancing cost: COST_BPS on the traded amount (pool fee plus slippage).
+  - BTC, HBAR and SAUCE: buy and hold.
+  - Vault issue/redeem fees (0.5% + 0.5%) and exchange fees are not included.
 """
+import io
 import json
+import os
 import sys
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else "backtest-prices.json"
+SRC = sys.argv[1] if len(sys.argv) > 1 else "prices-weekly.csv"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "results.json"
-import os
 COST_BPS = int(os.environ.get("COST_BPS", "30"))
-REB_MONTHS = int(os.environ.get("REB_MONTHS", "1"))  # cada cuántos meses se rebalancea
+REB_MONTHS = int(os.environ.get("REB_MONTHS", "1"))  # rebalance every N months
 START_CAPITAL = float(os.environ.get("START_CAPITAL", "1000"))
-WEEKLY = os.environ.get("WEEKLY", "0") == "1"  # añade el índice con rebalanceo semanal (cada domingo)
+WEEKLY = os.environ.get("WEEKLY", "0") == "1"  # also run the index with weekly rebalancing (every Sunday)
 
-WEIGHTS = {"HBAR": 20, "BTC": 15, "SAUCE": 10, "ETH": 10, "BONZO": 10, "DOVU": 10, "GIB": 10, "PACK": 5, "DAVINCI": 5, "GRELF": 5}
+# Current basket target weights (%), as in the vault. Price keys: the vault holds HTS-WBTC and HTS-WETH, the backtest
+# uses the BTC and ETH market price; xSAUCE and HBARX use their own SaucerSwap price history.
+DEFAULT_WEIGHTS = {"HBAR": 20, "BTC": 20, "XSAUCE": 15, "ETH": 10, "DOVU": 10, "PACK": 10, "HBARX": 10, "GIB": 5}
+WEIGHTS = json.loads(os.environ["WEIGHTS_JSON"]) if os.environ.get("WEIGHTS_JSON") else DEFAULT_WEIGHTS
+WEIGHTS = {k: (int(v) if float(v).is_integer() else v) for k, v in WEIGHTS.items()}
+COMPARE = ["BTC", "HBAR", "SAUCE"]  # buy and hold
 
 text = open(SRC).read()
 first_exact = {}
 if text.lstrip().startswith("{"):
-    # JSON diario de backtest-data.js
+    # daily JSON: {"generatedAt": ..., "sources": {...}, "series": {"BTC": [[unix_seconds, price], ...], ...}}
     raw = json.loads(text)
     SAMPLING = "daily"
     series = {}
@@ -42,35 +49,37 @@ if text.lstrip().startswith("{"):
     prices = pd.DataFrame(series).sort_index()
     prices = prices.reindex(pd.date_range(prices.index.min(), prices.index.max(), freq="D"))
 else:
-    # CSV reducido: cierres de los domingos y del primer y último día de cada mes
+    # reduced CSV: closes on Sundays and on the first and last day of each month
     SAMPLING = "weekly"
     raw = {"sources": {}, "generatedAt": None}
     lines = [l for l in text.splitlines() if l.strip()]
     for l in lines:
-        if l.startswith("# fuentes:"):
+        if l.startswith(("# sources:", "# fuentes:")):
             raw["sources"] = dict(x.split("=", 1) for x in l.split(":", 1)[1].split())
-        if l.startswith("# primer precio:"):
+        if l.startswith(("# first price:", "# primer precio:")):
             first_exact = {k: v for k, v in (x.split("=", 1) for x in l.split(":", 1)[1].split()) if v != "-"}
-    import io
     prices = pd.read_csv(io.StringIO("\n".join(l for l in lines if not l.startswith("#"))), parse_dates=["date"]).set_index("date").sort_index()
     prices = prices.apply(pd.to_numeric, errors="coerce")
 first_valid = {k: prices[k].first_valid_index() for k in prices.columns}
-prices = prices.ffill()  # días sin operaciones: último cierre
+prices = prices.ffill()  # days without trades: last close
 
 end = prices.index.max()
-start = (end.to_period("M") - 35).to_timestamp()  # día 1 del mes, 3 años: 35 meses completos + el mes en curso
+start = (end.to_period("M") - 35).to_timestamp()  # first day of the month, 3 years: 35 full months + the current one
 if start < prices.index.min():
     start = prices.index.min().to_period("M").to_timestamp() + pd.offsets.MonthBegin(1)
 prices = prices.loc[start:end]
-for need in ["BTC", "HBAR", "SAUCE"]:
+missing = [k for k in [*WEIGHTS, *COMPARE] if k not in prices.columns]
+if missing:
+    raise SystemExit(f"No prices for {', '.join(missing)} in {SRC}")
+for need in COMPARE:
     if pd.isna(prices[need].iloc[0]):
-        raise SystemExit(f"{need} sin precio al inicio ({start.date()})")
+        raise SystemExit(f"{need} has no price at the start ({start.date()})")
 
 
 def rebalanced(weights, cost_bps=None, reb_months=None):
-    """NAV de una cartera rebalanceada a `weights` (repartiendo los que aún no existen).
+    """NAV of a portfolio rebalanced to `weights` (sharing the weight of tokens that don't exist yet).
 
-    reb_months: 1, 3, 12… = cada N meses (el día 1); "W" = cada semana (cada domingo)."""
+    reb_months: 1, 3, 12... = every N months (on day 1); "W" = every week (on Sunday)."""
     cost_bps = COST_BPS if cost_bps is None else cost_bps
     reb_months = REB_MONTHS if reb_months is None else reb_months
     keys = list(weights)
@@ -112,17 +121,15 @@ def hold(key):
 
 
 idx, idx_log, idx_traded = rebalanced(WEIGHTS)
-hs, hs_log, hs_traded = rebalanced({"HBAR": 50, "SAUCE": 50})
 cols = {"H10X": idx}
 if WEEKLY:
     idx_w, idx_w_log, idx_w_traded = rebalanced(WEIGHTS, reb_months="W")
-    hs_w, hs_w_log, hs_w_traded = rebalanced({"HBAR": 50, "SAUCE": 50}, reb_months="W")
     cols["H10X_W"] = idx_w
-navs = pd.DataFrame({**cols, "BTC": hold("BTC"), "HBAR": hold("HBAR"), "HBAR_SAUCE": hs})
+navs = pd.DataFrame({**cols, **{k: hold(k) for k in COMPARE}})
 
 
 def period_returns(s):
-    """Rendimientos para volatilidad y ratios: diarios, o semanales (domingo a domingo) con el CSV reducido."""
+    """Returns used for volatility and ratios: daily, or weekly (Sunday to Sunday) with the reduced CSV."""
     if SAMPLING == "daily":
         return s.pct_change().dropna(), 365
     w = s[s.index.dayofweek == 6]
@@ -172,7 +179,7 @@ def monthly_returns(s):
 
 
 def yearly_returns(s):
-    """Tramos de 12 meses encadenados por cierres desde el inicio (el último, parcial hasta hoy)."""
+    """Chained 12-month periods from the start (the last one is partial, up to the end of the data)."""
     out = []
     prev = s.index[0]
     while prev < s.index[-1]:
@@ -191,7 +198,7 @@ for label, cb, rm in [("base", COST_BPS, 1), ("cost100", 100, 1), ("cost200", 20
 sens_matrix = None
 rebal_compare = None
 if WEEKLY:
-    # matriz frecuencia × coste (solo el índice)
+    # rebalancing frequency x cost matrix (index only)
     freqs, costs = ["W", 1, 3, 12], [COST_BPS, 100, 200]
     cells = []
     for f in freqs:
@@ -208,14 +215,13 @@ if WEEKLY:
         return {
             "final": float(st["final"]), "totalReturn": float(st["totalReturn"]), "cagr": float(st["cagr"]),
             "volatility": float(st["volatility"]), "maxDrawdown": float(st["maxDrawdown"]), "sharpe": float(st["sharpe"]),
-            "rebalances": len(lg) - 1,  # sin contar la compra inicial
+            "rebalances": len(lg) - 1,  # not counting the initial purchase
             "traded": float(tr), "costs": float(sum(x["cost"] for x in lg)),
         }
 
     rebal_compare = {
         "H10X": {"monthly": summ(idx, idx_log, idx_traded), "weekly": summ(idx_w, idx_w_log, idx_w_traded)},
-        "HBAR_SAUCE": {"monthly": summ(hs, hs_log, hs_traded), "weekly": summ(hs_w, hs_w_log, hs_w_traded)},
-        # sin ningún coste: separa el efecto de los costes del efecto del calendario
+        # with no cost at all: separates the effect of costs from the effect of the schedule
         "noCost": {"monthly": float(rebalanced(WEIGHTS, 0, 1)[0].iloc[-1]), "weekly": float(rebalanced(WEIGHTS, 0, "W")[0].iloc[-1])},
     }
 
@@ -247,7 +253,7 @@ res = {
     "componentsMonthly": {k: monthly_returns(prices[k].dropna()) for k in WEIGHTS if k in prices and prices[k].notna().any()},
 }
 json.dump(res, open(OUT, "w"), separators=(",", ":"))
-print(f"{res['start']} → {res['end']} · {len(res['dates'])} días")
+print(f"{res['start']} -> {res['end']} · {len(res['dates'])} rows")
 for k, s in res["stats"].items():
-    print(f"{k:11s} final {s['final']:9.2f} $ · total {s['totalReturn']*100:7.1f} % · CAGR {s['cagr']*100:6.1f} % · vol {s['volatility']*100:5.1f} % · maxDD {s['maxDrawdown']*100:6.1f} % · Sharpe {s['sharpe']:.2f} · meses+ {s['positiveMonths']*100:.0f} %")
-print("entradas en el índice:", {k: v for k, v in res["firstPrice"].items() if k in WEIGHTS})
+    print(f"{k:7s} final {s['final']:10.2f} $ · total {s['totalReturn']*100:7.1f} % · CAGR {s['cagr']*100:6.1f} % · vol {s['volatility']*100:5.1f} % · maxDD {s['maxDrawdown']*100:6.1f} % · Sharpe {s['sharpe']:.2f} · positive months {s['positiveMonths']*100:.0f} %")
+print("first price in the index:", {k: v for k, v in res["firstPrice"].items() if k in WEIGHTS})
